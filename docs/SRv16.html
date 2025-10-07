@@ -1,0 +1,1568 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Cosmic Drifter - Fixed Loop</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: radial-gradient(ellipse at center, #0a0e27 0%, #000000 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            display: block;
+            cursor: pointer;
+            box-shadow: 0 0 50px rgba(100, 149, 237, 0.3);
+        }
+        
+        /* Add fullscreen styles */
+:fullscreen {
+    width: 100vw;
+    height: 100vh;
+}
+
+:-webkit-full-screen {
+    width: 100vw;
+    height: 100vh;
+}
+
+:-moz-full-screen {
+    width: 100vw;
+    height: 100vh;
+}
+
+        /* Fullscreen button styles */
+        .fullscreen-container {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            z-index: 1000;
+            pointer-events: all;
+        }
+
+.fullscreen-text {
+    color: #FFFFFF;  
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 18px;
+    text-shadow: 0 0 40px rgba(0, 191, 255, 0.8), 
+
+
+    animation pulse-glow 2s ease-in-out infinite;
+}
+
+ .fullscreen-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            background: #ff4529;
+            box-shadow: 0 0 30px rgba(255, 69, 41, 1), inset 0 0 10px rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .fullscreen-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(255, 69, 41, 1.0), inset 0 0 15px rgba(255, 255, 255, 0.2);
+        }
+
+        .fullscreen-button:active {
+            transform: scale(0.95);
+        }
+
+        /* Hide fullscreen button when not in menu */
+        .fullscreen-container.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<!-- Fullscreen button container -->
+<div class="fullscreen-container" id="fullscreenContainer">
+    <span class="fullscreen-text">Recommended:</span>
+    <button class="fullscreen-button" id="fullscreenBtn">
+        FULL<br>SCREEN
+    </button>
+</div>
+
+<script>
+// Canvas setup
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let logicalWidth, logicalHeight;
+
+// declare stars early so createStarfield() can run safely from setCanvasSize
+let stars = [];
+
+let VISIBLE_RANGE = 800; // will be updated inside setCanvasSize()
+
+// Device pixel ratio safe resize + reset transform to avoid cumulative scaling
+function setCanvasSize() {
+    const dpr = window.devicePixelRatio || 1;
+    logicalWidth = window.innerWidth;
+    logicalHeight = window.innerHeight;
+
+    canvas.width = Math.round(logicalWidth * dpr);
+    canvas.height = Math.round(logicalHeight * dpr);
+
+    canvas.style.width = logicalWidth + 'px';
+    canvas.style.height = logicalHeight + 'px';
+
+    if (ctx.resetTransform) ctx.resetTransform();
+    else ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    ctx.scale(dpr, dpr);
+
+    VISIBLE_RANGE = Math.max(logicalWidth, logicalHeight) * 0.7;
+
+    // safe to regenerate starfield because `stars` exists
+    createStarfield();
+}
+
+setCanvasSize();
+
+// Fullscreen functionality
+function enterFullscreen() {
+    if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen();
+    } else if (document.documentElement.webkitRequestFullscreen) {
+        document.documentElement.webkitRequestFullscreen();
+    } else if (document.documentElement.mozRequestFullScreen) {
+        document.documentElement.mozRequestFullScreen();
+    } else if (document.documentElement.msRequestFullscreen) {
+        document.documentElement.msRequestFullscreen();
+    }
+}
+
+// Fullscreen button event listener
+document.getElementById('fullscreenBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    enterFullscreen();
+});
+
+// Handle fullscreen changes
+document.addEventListener('fullscreenchange', () => {
+    setCanvasSize(); // Resize canvas when fullscreen changes
+});
+
+document.addEventListener('webkitfullscreenchange', () => {
+    setCanvasSize();
+});
+
+document.addEventListener('mozfullscreenchange', () => {
+    setCanvasSize();
+});
+
+window.addEventListener('resize', setCanvasSize);
+
+// Update fullscreen button visibility based on game state
+function updateFullscreenButtonVisibility() {
+    const fullscreenContainer = document.getElementById('fullscreenContainer');
+    if (gameState === 'menu') {
+        fullscreenContainer.classList.remove('hidden');
+    } else {
+        fullscreenContainer.classList.add('hidden');
+    }
+}
+
+    // -------------------------
+    // Game State & Settings
+    // Put all tunable constants here
+    // -------------------------
+    let score = 0;
+    let gameState = 'menu';
+    let gameOverReason = "";
+    let planets = [];
+    let crabs = [];
+    let crabSpawnTimer = 7200;
+    let eggs = [];
+    let explosions = [];
+    stars = [];
+    let floatingScores = [];
+	let highScore = 0;
+    
+    let blackHoles = [];
+    let blackHoleBombs = 0;
+    let landingEffects = [];
+
+    const G = 0.8;
+    const CONSTANT_SPEED = 8;
+    const PLANET_COUNT = (logicalWidth * logicalHeight) / 50000;
+    const FIXED_FPS_INTERVAL = 1000 / 40; // Target 60 FPS update logic
+
+    // Animation control - ensure single RAF loop
+    let animationFrameId = null;
+    let isLooping = false;
+
+    // -------------------------
+    // Helpers & Entities (unchanged logic with small fixes)
+    // -------------------------
+    function getRandom(min, max) { return Math.random() * (max - min) + min; }
+    function distance(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+
+    function createStarfield() {
+        stars = [];
+        for (let i = 0; i < 200; i++) {
+            stars.push({
+                x: Math.random() * logicalWidth,
+                y: Math.random() * logicalHeight,
+                size: Math.random() * 2,
+                brightness: Math.random()
+            });
+        }
+    }
+
+    function generatePlanetColor() {
+        const hue = Math.random() * 60;
+        const saturation = 85 + Math.random() * 15;
+        const lightness = 45 + Math.random() * 10;
+        return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+    }
+
+    // LandingEffect, DeathExplosion, BlackHole, Explosion classes...
+    // (use same code as you had; trimmed here to keep focus on loop fix)
+    // Full classes follow exactly as in your original file with only necessary corrections applied.
+
+ class BlackHole {
+    constructor(x, y) {
+        this.x = x; 
+        this.y = y;
+        this.radius = 2; 
+        this.maxRadius = getRandom(150,250);
+        this.pullRadius = this.maxRadius;
+        this.deathRadius = 20;
+        this.life = 200;
+        this.rotation = 0;
+        this.particles = [];
+        this.state = 'converging'; // 'converging', 'active', 'contracting'
+        this.convergeTimer = 40;
+        this.rotationalForce = 0.15;
+        this.contractStartTime = 0; // Track when contraction begins
+        
+        // Create particles that start far from center and move inward
+        for (let i = 0; i < 50; i++) {
+            this.particles.push({
+                angle: Math.random() * Math.PI * 2,
+                distance: getRandom(50, 200), // Start far out
+                speed: getRandom(0.02, 0.05),
+                size: getRandom(2, 5),
+                orbitRadius: getRandom(30, this.maxRadius*0.7), // Final orbit position after convergence
+                converging: true // Flag to track convergence phase
+            });
+        }
+    }
+    
+    update(car, allCrabs, allEggs, deltaTime) {
+        const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+        this.life -= dtRatio;
+        this.rotation += 0.04 * dtRatio;
+        
+        if (this.state === 'converging') {
+            this.convergeTimer -= dtRatio;
+            
+            // Particles move toward center
+            let allConverged = true;
+            this.particles.forEach(p => {
+                if (p.converging && p.distance > 0) {
+                    p.distance -= 8 * dtRatio; // Move toward center
+                    if (p.distance <= 0) {
+                        p.distance = 0;
+                        p.converging = false;
+                    } else {
+                        allConverged = false;
+                    }
+                }
+            });
+            
+            // Transition to active when all particles reach center OR timer expires
+            if (allConverged || this.convergeTimer <= 0) {
+                this.state = 'active';
+                // Now particles expand to their orbit positions
+                this.particles.forEach(p => {
+                    p.distance = 0;
+                });
+            }
+        } else if (this.state === 'active') {
+            // Fast growth to max size
+            if (this.radius < this.maxRadius) {
+                this.radius = Math.min(this.radius + 15 * dtRatio, this.maxRadius);
+            }
+            
+            // Update particles in stable orbits
+            this.particles.forEach(p => {
+                p.angle += p.speed * dtRatio;
+                p.distance = p.orbitRadius * (this.radius / this.maxRadius);
+            });
+            
+            if (this.life < 30) {
+                this.state = 'contracting';
+                this.contractStartTime = 30; // Track contraction progress
+            }
+        } else if (this.state === 'contracting') {
+            // Exponential contraction - slow start, then super fast (2x faster)
+            const contractProgress = (30 - this.life) / 30; // 0 to 1
+            const exponentialFactor = Math.pow(contractProgress, 3) * 40 + 2; // Exponential curve (2x faster)
+            
+            this.radius = Math.max(0, this.radius - exponentialFactor * dtRatio);
+            this.particles.forEach(p => {
+                p.distance = Math.max(0, p.distance - exponentialFactor * dtRatio);
+            });
+        }
+        
+        // Apply forces only during active state
+        if (this.state === 'active') {
+            // Affect car
+            if (car) {
+                const carDist = distance(this.x, this.y, car.x, car.y);
+                
+                if (carDist < this.pullRadius) {
+                    // Force car off planet and set lastAttachedPlanet (FIX #1)
+                    if (car.attachedPlanet) {
+                        car.isJumping = true;
+                        car.lastAttachedPlanet = car.attachedPlanet; // Set this BEFORE nulling attachedPlanet
+                        car.attachedPlanet = null;
+                    }
+                    
+                    // Prevent jumping when in strong pull zone (FIX #3)
+                    if (carDist < this.pullRadius * 0.6) {
+                        car.canJump = false; // Add this flag to prevent space bar escapes
+                    }
+                    
+                    // Death check
+                    if (carDist < this.deathRadius) {
+                        setGameOver("Swallowed!");
+                        return this.life > 0;
+                    }
+                    
+                    // Strong gravitational pull - always toward center
+                    const pullStrength = Math.pow(1 - (carDist / this.pullRadius), 2) * 10 * dtRatio;
+                    const gravityAngle = Math.atan2(this.y - car.y, this.x - car.x);
+                    
+                    // Apply gravity (always attractive, never repulsive) (FIX #2)
+                    car.velX += Math.cos(gravityAngle) * pullStrength;
+                    car.velY += Math.sin(gravityAngle) * pullStrength;
+                    
+                    // Apply rotational force only if not too close to center
+                    if (carDist > this.deathRadius * 2) {
+                        const tangentialAngle = gravityAngle + Math.PI / 2;
+                        const rotationStrength = pullStrength * this.rotationalForce;
+                        car.velX += Math.cos(tangentialAngle) * rotationStrength;
+                        car.velY += Math.sin(tangentialAngle) * rotationStrength;
+                    }
+                    
+                    // Strong damping to prevent escape
+                    car.velX *= Math.pow(0.98, dtRatio);
+                    car.velY *= Math.pow(0.98, dtRatio);
+                } else {
+                    // Reset jump ability when outside pull radius
+                    car.canJump = true;
+                }
+            }
+            
+            // Affect planets
+            planets.forEach((planet) => {
+                const planetDist = distance(this.x, this.y, planet.x, planet.y);
+                if (planetDist < this.pullRadius) {
+                    const pullStrength = (1 - planetDist / this.pullRadius) * 8 * dtRatio;
+                    const gravityAngle = Math.atan2(this.y - planet.y, this.x - planet.x);
+                    
+                    // Only apply gravity, no rotation for very close planets
+                    planet.velX += Math.cos(gravityAngle) * pullStrength;
+                    planet.velY += Math.sin(gravityAngle) * pullStrength;
+                    
+                    if (planetDist > this.deathRadius * 3) {
+                        const tangentialAngle = gravityAngle + Math.PI / 2;
+                        const rotationStrength = pullStrength * this.rotationalForce;
+                        planet.velX += Math.cos(tangentialAngle) * rotationStrength;
+                        planet.velY += Math.sin(tangentialAngle) * rotationStrength;
+                    }
+                    
+                    // Destroy planet if too close
+                    if (planetDist < this.deathRadius * 3) {
+                        explosions.push(new Explosion(planet.x, planet.y));
+                        floatingScores.push(new FloatingScore(planet.x, planet.y, 5));
+                        const index = planets.indexOf(planet);
+                        if (index > -1) {
+                            planets.splice(index, 1);
+                            score += 5;
+                        }
+                    }
+                }
+            });
+            
+            // Affect crabs and eggs
+            [...allCrabs, ...allEggs].forEach((entity) => {
+                const dist = distance(this.x, this.y, entity.x, entity.y);
+                if (dist < this.pullRadius) {
+                    if (dist < this.deathRadius * 2) {
+                        if (entity instanceof Crab) {
+                            explosions.push(new Explosion(entity.x, entity.y));
+                            floatingScores.push(new FloatingScore(entity.x, entity.y, 10));
+                            allCrabs.splice(allCrabs.indexOf(entity), 1);
+                            score += 10;
+                        } else {
+                            floatingScores.push(new FloatingScore(entity.x, entity.y, 20));
+                            allEggs.splice(allEggs.indexOf(entity), 1);
+                            score += 20;
+                        }
+                        return;
+                    }
+                    
+                    const pullStrength = (1 - dist / this.pullRadius) * 15 * dtRatio;
+                    const gravityAngle = Math.atan2(this.y - entity.y, this.x - entity.x);
+                    
+                    if (entity instanceof Crab && entity.attachedPlanet) {
+                        entity.isJumping = true;
+                        entity.attachedPlanet = null;
+                        entity.velX = getRandom(-3, 3);
+                        entity.velY = getRandom(-3, 3);
+                    }
+                    
+                    const gravityX = Math.cos(gravityAngle) * pullStrength;
+                    const gravityY = Math.sin(gravityAngle) * pullStrength;
+                    
+                    // Only apply rotation if not too close
+                    if (dist > this.deathRadius * 2) {
+                        const tangentialAngle = gravityAngle + Math.PI / 2;
+                        const rotationStrength = pullStrength * this.rotationalForce;
+                        const rotationX = Math.cos(tangentialAngle) * rotationStrength;
+                        const rotationY = Math.sin(tangentialAngle) * rotationStrength;
+                        entity.x += gravityX + rotationX;
+                        entity.y += gravityY + rotationY;
+                    } else {
+                        entity.x += gravityX;
+                        entity.y += gravityY;
+                    }
+                }
+            });
+        } else {
+            // Reset jump ability when black hole is not active
+            if (car) car.canJump = true;
+        }
+        
+        return this.life <= 0 && this.radius <= 0;
+    }
+    
+    draw() {
+        ctx.save();
+        
+        // Draw gradient for active and contracting states
+        if (this.state !== 'converging' && this.radius > 1) {
+            const gradient = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+            gradient.addColorStop(0, 'rgba(0, 0, 0, 0.95)');
+            gradient.addColorStop(0.2, 'rgba(25, 0, 51, 0.9)');
+            gradient.addColorStop(0.6, 'rgba(75, 0, 130, 0.7)');
+            gradient.addColorStop(0.7, 'rgba(138, 43, 226, 0.1)');
+            gradient.addColorStop(0.8, 'rgba(138, 43, 226, 0.05)');
+            gradient.addColorStop(0.9, 'rgba(138, 43, 226, 0.025)');
+            gradient.addColorStop(1, 'rgba(138, 43, 226, 0.00125)');
+            
+            ctx.fillStyle = gradient;
+            ctx.shadowColor = '#4B0082';
+            ctx.shadowBlur = 50;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Draw particles
+        this.particles.forEach(p => {
+            if (p.distance > 0) {
+                const x = this.x + Math.cos(p.angle + this.rotation) * p.distance;
+                const y = this.y + Math.sin(p.angle + this.rotation) * p.distance;
+                
+                let opacity;
+                if (this.state === 'converging') {
+                    opacity = 0.9; // Bright during convergence
+                } else {
+                    opacity = 0.8 * (this.life / 200);
+                }
+                
+                ctx.fillStyle = `rgba(186, 85, 211, ${opacity})`;
+                ctx.shadowColor = '#BA55D3';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(x, y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        });
+        
+        // Draw death point in center during active state
+        if (this.state === 'active') {
+            ctx.fillStyle = 'rgba(0, 0, 0, 1)';
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = '#000000';
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.deathRadius * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        ctx.restore();
+    }
+}
+
+    // Car, Crab, Egg, Planet classes reproduced from your file
+    // (kept identical except for the gravity formula change you applied earlier where appropriate)
+    class Car {
+        constructor() {
+            this.attachedPlanet = null;
+            this.lastAttachedPlanet = null;
+            this.angleOnPlanet = 0;
+            this.speed = 0.009 * CONSTANT_SPEED;
+            this.isJumping = false;
+            this.x = 0; this.y = 0;
+            this.velX = 0; this.velY = 0;
+            this.size = 10; this.color = '#BABABA';
+            this.rotationDirection = 1; 
+            this.currentRotation = 0; 
+            this.wheelRotation = 0; // For rolling animation
+            this.trail = [];
+            this.blackHoleScale = 1;
+        }
+
+        attachTo(planet) {
+            this.attachedPlanet = planet;
+            this.isJumping = false;
+            
+            // Calculate angle based on approach vector for smooth landing
+            const dx = this.x - planet.x;
+            const dy = this.y - planet.y;
+            this.angleOnPlanet = Math.atan2(dy, dx);
+            
+            // Smoothly position on planet surface
+            const totalRadius = planet.radius + this.size;
+            this.x = planet.x + Math.cos(this.angleOnPlanet) * totalRadius;
+            this.y = planet.y + Math.sin(this.angleOnPlanet) * totalRadius;
+            
+            const tangentAngle = this.angleOnPlanet + Math.PI / 2;
+            const tangentX = Math.cos(tangentAngle);
+            const tangentY = Math.sin(tangentAngle);
+            const dotProduct = this.velX * tangentX + this.velY * tangentY;
+            this.rotationDirection = dotProduct >= 0 ? 1 : -1;
+            landingEffects.push(new LandingEffect(this.x, this.y));
+        }
+
+        jump() {
+            if (this.isJumping || !this.attachedPlanet) return;
+            this.isJumping = true;
+            const planet = this.attachedPlanet;
+            this.lastAttachedPlanet = planet;
+            this.attachedPlanet = null;
+            const tangentAngle = this.angleOnPlanet + (Math.PI / 30) * this.rotationDirection;
+            this.velX = Math.cos(tangentAngle) * CONSTANT_SPEED;
+            this.velY = Math.sin(tangentAngle) * CONSTANT_SPEED;
+        }
+
+        update(deltaTime) {
+    const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+    let nearBlackHole = false;
+    for (const hole of blackHoles) {
+        if (distance(this.x, this.y, hole.x, hole.y) < hole.pullRadius) {
+            nearBlackHole = true; break;
+        }
+    }
+
+    if (!nearBlackHole) {
+        this.trail.push({x: this.x, y: this.y, life: 20});
+    }
+    this.trail = this.trail.filter(t => { t.life -= dtRatio; return t.life > 0; });
+
+    if (this.isJumping) {
+        planets.forEach(p => {
+            if (p === this.lastAttachedPlanet) return;
+            const d = distance(this.x, this.y, p.x, p.y);
+            if (d > 1 && d < p.radius * 8) {
+                const angleToPlanet = Math.atan2(p.y - this.y, p.x - this.x);
+                // Much stronger gravity when close - using inverse cube for dramatic effect
+                const force = (G * p.radius * 50 ) / (d * d) * dtRatio;
+                this.velX += Math.cos(angleToPlanet) * force;
+                this.velY += Math.sin(angleToPlanet) * force;
+            }
+        });
+
+        // Normalize velocity when not affected by black hole
+        let currentSpeed = Math.hypot(this.velX, this.velY);
+        if (currentSpeed > 0 && this.blackHoleScale === 1) {
+            const targetSpeed = CONSTANT_SPEED;
+            if (currentSpeed !== targetSpeed) {
+                const speedDiff = targetSpeed - currentSpeed;
+                const adjustment = speedDiff * 0.1 * dtRatio; // Adjust 10% of the difference per frame
+                const newSpeed = currentSpeed + adjustment;
+                this.velX = (this.velX / currentSpeed) * newSpeed;
+                this.velY = (this.velY / currentSpeed) * newSpeed;
+            }
+        }
+
+        this.x += this.velX * dtRatio;
+        this.y += this.velY * dtRatio;
+        this.currentRotation = Math.atan2(this.velY, this.velX);
+    } else if (this.attachedPlanet) {
+        const planet = this.attachedPlanet;
+        this.angleOnPlanet += this.speed * this.rotationDirection * dtRatio;
+        
+        // Update wheel rotation for rolling animation
+        this.wheelRotation += this.speed * this.rotationDirection * 3 * dtRatio;
+        
+        const totalRadius = planet.radius + this.size;
+        this.x = planet.x + Math.cos(this.angleOnPlanet) * totalRadius;
+        this.y = planet.y + Math.sin(this.angleOnPlanet) * totalRadius;
+        this.currentRotation = this.angleOnPlanet + Math.PI / 2;
+    }
+
+    if (this.x < -this.size || this.x > logicalWidth + this.size || this.y < -this.size || this.y > logicalHeight + this.size) {
+        explosions.push(new DeathExplosion(this.x, this.y));
+        setGameOver("Rammed into the edge of the universe!");
+    }
+}
+
+draw() {
+    this.trail.forEach((t) => {
+        ctx.save();
+        ctx.globalAlpha = t.life / 40;
+        ctx.fillStyle = '#87CEEB';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, (t.life / 20) * 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    });
+
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.currentRotation);
+    
+    // Add wheel rotation when on planet
+    if (this.attachedPlanet) {
+        ctx.rotate(this.wheelRotation);
+    }
+    
+    ctx.scale(this.blackHoleScale, this.blackHoleScale);
+    ctx.shadowColor = '#00FFFF';
+    ctx.shadowBlur = 50;
+
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size);
+    gradient.addColorStop(0, '#00FFFF');
+    gradient.addColorStop(0.5, '#0066cc');
+    gradient.addColorStop(1, '#001a33');
+
+    ctx.fillStyle = gradient;
+
+    const innerRadius = this.size * 0.85;
+    const outerRadius = this.size;
+    const numTeeth = 12;
+    const angleStep = Math.PI * 2 / numTeeth;
+    const innerToothWidthAngle = angleStep * 0.3;
+    const outerToothWidthAngle = angleStep * 0.7;
+    const gapAngleInner = angleStep - innerToothWidthAngle;
+    const overhang = (outerToothWidthAngle - innerToothWidthAngle) / 2;
+
+    let currentAngle = 0;
+    ctx.beginPath();
+    ctx.moveTo(innerRadius * Math.cos(currentAngle), innerRadius * Math.sin(currentAngle));
+
+    for (let i = 0; i < numTeeth; i++) {
+        let gapEndAngle = currentAngle + gapAngleInner;
+        ctx.arc(0, 0, innerRadius, currentAngle, gapEndAngle);
+        currentAngle = gapEndAngle;
+
+        let leftOuter = currentAngle - overhang;
+        let px = outerRadius * Math.cos(leftOuter);
+        let py = outerRadius * Math.sin(leftOuter);
+        ctx.lineTo(px, py);
+
+        let rightOuter = leftOuter + outerToothWidthAngle;
+        ctx.arc(0, 0, outerRadius, leftOuter, rightOuter);
+
+        let rightInner = rightOuter - overhang;
+        px = innerRadius * Math.cos(rightInner);
+        py = innerRadius * Math.sin(rightInner);
+        ctx.lineTo(px, py);
+
+        currentAngle = rightInner;
+    }
+
+    ctx.closePath();
+    ctx.fill();
+
+
+
+    ctx.restore();
+}
+    }
+
+    // Crab, Egg, Planet classes follow same logic as original code.
+    // (For brevity in this response I retained their logic; in your file include them verbatim
+    //  with the gravity line in Crab using inverse-square as shown previously.)
+
+    class Crab {
+        constructor(x, y) {
+            this.x = x; this.y = y;
+            this.attachedPlanet = null; this.lastPlanet = null;
+            this.angleOnPlanet = 0; 
+            this.speed = 0.04;
+            this.isJumping = false; 
+            this.velX = 0; this.velY = 0;
+            this.size = 10; 
+            this.baseSize = 10;
+            this.jumpCooldown = 100; this.eggCooldown = getRandom(200, 400);
+            this.animPhase = 0; this.layingEgg = false; this.eggLayTimer = 0;
+            this.jumpScale = 1; this.blackHoleScale = 1; this.jumpProgress = 0;
+        }
+
+        attachTo(planet) {
+            this.attachedPlanet = planet; 
+            this.isJumping = false;
+            this.jumpScale = 1; 
+            this.jumpProgress = 0;
+            this.angleOnPlanet = Math.atan2(this.y - planet.y, this.x - planet.x);
+            // Ensure crab is positioned correctly on planet surface
+            const totalRadius = planet.radius + this.size;
+            this.x = planet.x + Math.cos(this.angleOnPlanet) * totalRadius;
+            this.y = planet.y + Math.sin(this.angleOnPlanet) * totalRadius;
+        }
+
+        update(car, allPlanets, deltaTime) {
+            const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+            this.animPhase += 0.1 * dtRatio;
+            if (this.jumpCooldown > 0) this.jumpCooldown -= dtRatio;
+            if (this.eggCooldown > 0) this.eggCooldown -= dtRatio;
+
+            if (this.layingEgg) {
+                this.eggLayTimer += dtRatio;
+                const cycle = Math.sin(this.eggLayTimer * 0.3);
+                this.size = this.baseSize * (1 + cycle * 0.5);
+                if (this.eggLayTimer >= 20) {
+                    if (this.attachedPlanet) eggs.push(new Egg(this.x, this.y, this.attachedPlanet));
+                    this.layingEgg = false; this.eggLayTimer = 0; this.size = this.baseSize;
+                    this.eggCooldown = getRandom(300, 500);
+                }
+            }
+
+            if (this.eggCooldown <= 0 && this.attachedPlanet && !this.isJumping && !this.layingEgg) {
+                this.layingEgg = true;
+            }
+
+            if (this.isJumping) {
+
+           
+                // Update position
+                this.x += this.velX * dtRatio; 
+                this.y += this.velY * dtRatio;
+
+                // Check for landing on planets
+                for (const planet of allPlanets) {
+                    const dist = distance(this.x, this.y, planet.x, planet.y);
+                    if (dist < planet.radius + this.size) {
+                        this.attachTo(planet);
+                        break;
+                    }
+                }
+            } else if (this.attachedPlanet) {
+                const planet = this.attachedPlanet;
+                if (!this.layingEgg) this.angleOnPlanet += this.speed * dtRatio;
+                const totalRadius = planet.radius + this.size;
+                this.x = planet.x + Math.cos(this.angleOnPlanet) * totalRadius;
+                this.y = planet.y + Math.sin(this.angleOnPlanet) * totalRadius;
+
+                if (this.jumpCooldown <= 0 && !this.layingEgg) {
+                    let bestPlanet = null; 
+                    let bestScore = Infinity;
+                    
+                    for (const targetPlanet of allPlanets) {
+                        if (targetPlanet === planet || targetPlanet === this.lastPlanet) continue;
+                        const distToPlanet = distance(this.x, this.y, targetPlanet.x, targetPlanet.y);
+                        const distToPlayer = distance(targetPlanet.x, targetPlanet.y, car.x, car.y);
+                        const score = distToPlayer * 1.2 + (distToPlanet > 400 ? 1000 : 0) + getRandom(0, 500);
+                        if (distToPlanet < 350 && score < bestScore) {
+                            bestScore = score; 
+                            bestPlanet = targetPlanet;
+                        }
+                    }
+                    
+                    if (bestPlanet) {
+                        this.lastPlanet = planet; 
+                        this.isJumping = true; 
+                        this.jumpProgress = 0;
+                        this.attachedPlanet = null;
+                        
+                        // Fixed jump velocity calculation
+                        const dx = bestPlanet.x - this.x; 
+                        const dy = bestPlanet.y - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        // Calculate required velocity to reach target
+                        const jumpSpeed = Math.min(dist * 0.06, 8);
+                        this.velX = (dx / dist) * jumpSpeed; 
+                        this.velY = (dy / dist) * jumpSpeed; 
+                        this.jumpCooldown = 100;
+                    }
+                }
+            }
+            this.size = this.baseSize * this.jumpScale * this.blackHoleScale;
+        }
+
+draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    if (this.attachedPlanet) {
+        const angleToCenter = Math.atan2(this.attachedPlanet.y - this.y, this.attachedPlanet.x - this.x);
+        ctx.rotate(angleToCenter - Math.PI / 2);
+    }
+    ctx.shadowColor = '#FF4500'; ctx.shadowBlur = 35;
+    const bodyScale = this.layingEgg ? 1 + Math.sin(this.eggLayTimer * 0.2) * 0.3 : 1;
+    ctx.scale(bodyScale * this.jumpScale, bodyScale * this.jumpScale);
+
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size);
+    gradient.addColorStop(0, '#FF6347');
+    gradient.addColorStop(0.5, '#FF0000');
+    gradient.addColorStop(1, '#8B0000');
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, this.size, this.size * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#8B0000'; ctx.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+        const baseAngle = (i * Math.PI / 3);
+        const wiggle = this.layingEgg ? 0 : Math.sin(this.animPhase + i) * 0.3;
+        const angle = baseAngle + wiggle;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        const legLength = this.size * 1.8;
+        ctx.lineTo(Math.cos(angle) * legLength, Math.sin(angle) * legLength * 0.6);
+        ctx.stroke();
+    }
+    ctx.fillStyle = '#FFFF00'; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.arc(-this.size * 0.3, -this.size * 0.2, 2.5, 0, Math.PI * 2);
+    ctx.arc(this.size * 0.3, -this.size * 0.2, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}    }
+
+    class Egg {
+        constructor(x, y, planet) {
+            this.x = x; this.y = y; this.planet = planet;
+            this.angleOnPlanet = Math.atan2(y - planet.y, x - planet.x);
+            this.hatchTimer = 600; this.pulse = 0; this.baseSize = 5; this.currentSize = this.baseSize;
+        }
+        update(deltaTime) {
+            const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+            this.hatchTimer -= dtRatio; this.pulse += 0.15 * dtRatio;
+            const hatchProgress = 1 - (this.hatchTimer / 600);
+            this.currentSize = this.baseSize * (1 + hatchProgress * 1.5);
+            if (this.planet) {
+                const totalRadius = this.planet.radius + this.currentSize;
+                this.x = this.planet.x + Math.cos(this.angleOnPlanet) * totalRadius;
+                this.y = this.planet.y + Math.sin(this.angleOnPlanet) * totalRadius;
+            }
+            if (this.hatchTimer <= 0) {
+                const newCrab = new Crab(this.x, this.y);
+                if (this.planet) newCrab.attachTo(this.planet);
+                crabs.push(newCrab);
+                explosions.push(new Explosion(this.x, this.y));
+                return true;
+            }
+            return false;
+        }
+draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+
+    // Orient egg with bottom toward planet center
+    if (this.planet) {
+        const angleToCenter = Math.atan2(this.planet.y - this.y, this.planet.x - this.x);
+        ctx.rotate(angleToCenter - Math.PI / 2);
+    }
+
+    // Orange-Red glow effect, matching the crab's shadow
+    const glowPulse = 0.7 + Math.cos(this.pulse) * 0.3; // Glow intensity pulses
+    ctx.shadowColor = '#FF4500'; // Crab's shadow color
+    ctx.shadowBlur = 20 + glowPulse * 15;
+
+    // Main egg body - red gradient from the crab
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.currentSize);
+    gradient.addColorStop(0, '#FF6347');   // Lighter red center
+    gradient.addColorStop(0.7, '#FF0000'); // Mid red
+    gradient.addColorStop(1, '#8B0000');   // Dark red edge
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, this.currentSize, this.currentSize * 1.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Reset shadow before drawing dots so they don't cast a large shadow
+    ctx.shadowBlur = 0;
+
+    // Add tiny yellow dots
+    ctx.fillStyle = 'rgba(255, 255, 0, 0.9)'; // Bright yellow
+    const dotCount = 20; // Number of dots on the egg
+    for (let i = 0; i < dotCount; i++) {
+        // Use consistent positions based on egg creation to prevent dots from moving
+        const angle = (i / dotCount) * Math.PI * 2 + this.angleOnPlanet;
+        const distFromCenter = this.currentSize * (0.3 + (i % 3) * 0.4);
+        const dotX = Math.cos(angle) * distFromCenter;
+        const dotY = Math.sin(angle) * distFromCenter * 0.6; // Flatten for egg shape
+        const dotSize = 0.2 + (i % 2 / 4); // Vary dot sizes
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, dotSize, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Inner glow - pulsating orange/yellow to match the new theme
+    ctx.fillStyle = `rgba(255, 165, 0, ${glowPulse * 0.6})`; // Orange inner glow
+    ctx.beginPath();
+    ctx.ellipse(0, 0, this.currentSize * 0.3, this.currentSize * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.restore();
+}     }
+
+    class Planet {
+constructor(x, y, radius, color) {
+    this.x = x; this.y = y; this.radius = radius; this.color = color;
+    this.rotationSpeed = getRandom(-0.02, 0.02);
+    this.velX = getRandom(-0.5, 0.5); 
+    this.velY = getRandom(-0.5, 0.5);
+    this.rotation = 0; this.craters = [];
+    
+    // New movement properties
+    this.targetVelX = getRandom(-1, 1);
+    this.targetVelY = getRandom(-1, 1);
+    this.directionChangeTimer = getRandom(300, 800); // Frames until direction change
+    this.maxSpeed = 0.8;
+    
+    this.generateCraters();
+}
+        generateCraters() {
+            const numCraters = Math.floor(getRandom(1, 4));
+            for (let i = 0; i < numCraters; i++) {
+                const angle = getRandom(0, Math.PI * 2);
+                const dist = getRandom(0.2, 0.7) * this.radius;
+                this.craters.push({ angle: angle, dist: dist, size: getRandom(this.radius / 10, this.radius / 6) });
+            }
+        }
+update(allPlanets, carX, carY, deltaTime) {
+    const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+    this.rotation += this.rotationSpeed * dtRatio;
+    
+    // Slowly change direction
+    this.directionChangeTimer -= dtRatio;
+    if (this.directionChangeTimer <= 0) {
+        this.targetVelX = getRandom(-1, 1);
+        this.targetVelY = getRandom(-1, 1);
+        this.directionChangeTimer = getRandom(300, 800);
+    }
+    
+    // Gradually move toward target velocity
+    const lerpFactor = 0.005 * dtRatio;
+    this.velX += (this.targetVelX - this.velX) * lerpFactor;
+    this.velY += (this.targetVelY - this.velY) * lerpFactor;
+    
+    // Map edge containment forces
+    const edgeForce = 0.008 * dtRatio;
+    const margin = 100;
+    
+    if (this.x < margin) {
+        this.velX += edgeForce * (margin - this.x) / margin;
+    } else if (this.x > logicalWidth - margin) {
+        this.velX -= edgeForce * (this.x - (logicalWidth - margin)) / margin;
+    }
+    
+    if (this.y < margin) {
+        this.velY += edgeForce * (margin - this.y) / margin;
+    } else if (this.y > logicalHeight - margin) {
+        this.velY -= edgeForce * (this.y - (logicalHeight - margin)) / margin;
+    }
+    
+    // Planet-to-planet repulsion to prevent clustering
+    allPlanets.forEach(other => {
+        if (this === other) return;
+        const d = distance(this.x, this.y, other.x, other.y);
+        const minDist = this.radius + other.radius + 120;
+        
+        if (d < minDist && d > 0) {
+            const angle = Math.atan2(this.y - other.y, this.x - other.x);
+            const force = (1 - d / minDist) * 0.02 * dtRatio;
+            this.velX += Math.cos(angle) * force;
+            this.velY += Math.sin(angle) * force;
+        }
+    });
+    
+    // Apply speed limiting
+    const currentSpeed = Math.hypot(this.velX, this.velY);
+    if (currentSpeed > this.maxSpeed) {
+        this.velX = (this.velX / currentSpeed) * this.maxSpeed;
+        this.velY = (this.velY / currentSpeed) * this.maxSpeed;
+    }
+    
+    // Apply gentle damping for stability
+    this.velX *= Math.pow(0.998, dtRatio);
+    this.velY *= Math.pow(0.998, dtRatio);
+    
+    // Update position
+    this.x += this.velX * dtRatio;
+    this.y += this.velY * dtRatio;
+}
+        draw() {
+            ctx.save();
+            ctx.shadowColor = this.color; ctx.shadowBlur = 120;
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fillStyle = this.color; ctx.fill(); ctx.globalAlpha = 0.5; ctx.fill(); ctx.restore();
+
+            ctx.save(); ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.clip();
+            this.craters.forEach(c => {
+                const craterX = this.x + Math.cos(c.angle + this.rotation) * c.dist;
+                const craterY = this.y + Math.sin(c.angle + this.rotation) * c.dist;
+                ctx.fillStyle = 'rgba(100, 100, 100, 0.4)';
+                ctx.beginPath();
+                ctx.arc(craterX, craterY, c.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+        }
+    }
+    
+        class LandingEffect {
+        constructor(x, y) {
+            this.x = x; this.y = y;
+            this.radius = 3; this.maxRadius = 20; this.life = 15; this.opacity = 0.5;
+        }
+        update(deltaTime) {
+            const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+            this.life -= dtRatio;
+            this.radius += (this.maxRadius - this.radius) * 0.15 * dtRatio;
+            this.opacity = this.life / 30;
+            return this.life > 0;
+        }
+        draw() {
+            ctx.save();
+            ctx.strokeStyle = `rgba(255, 255, 255, ${this.opacity})`;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#FFF FFF';
+            ctx.shadowBlur = 20;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+
+     class Explosion {
+        constructor(x, y) {
+            this.x = x; this.y = y; this.particles = []; this.life = 80;
+            for (let i = 0; i < 40; i++) {
+                this.particles.push({
+                    x: x, y: y,
+                    velX: getRandom(-10, 10),
+                    velY: getRandom(-10, 10),
+                    size: getRandom(3, 8),
+                    life: getRandom(40, 80),
+                    color: `hsl(${getRandom(0, 30)}, 100%, ${50 + getRandom(0, 30)}%)`
+                });
+            }
+        }
+        
+        update(deltaTime) {
+            const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+            this.life -= dtRatio;
+            this.particles = this.particles.filter(p => {
+                p.x += p.velX * dtRatio; p.y += p.velY * dtRatio;
+                p.velX *= Math.pow(0.96, dtRatio); p.velY *= Math.pow(0.96, dtRatio);
+                p.life -= dtRatio; p.size *= Math.pow(0.94, dtRatio);
+                return p.life > 0;
+            });
+            return this.life > 0;
+        }
+        draw() {
+            this.particles.forEach(p => {
+                ctx.save();
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 80;
+                ctx.shadowColor = '#00BFFF';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+    }
+
+    class DeathExplosion {
+        constructor(x, y) {
+            this.x = x; this.y = y; this.particles = []; this.life = 80;
+            for (let i = 0; i < 60; i++) {
+                this.particles.push({
+                    x: x, y: y,
+                    velX: getRandom(-12, 12),
+                    velY: getRandom(-12, 12),
+                    size: getRandom(4, 10),
+                    life: getRandom(50, 80),
+                    color: `hsl(${200 + getRandom(-20, 20)}, 100%, ${50 + getRandom(0, 30)}%)`
+                });
+            }
+        }
+        update(deltaTime) {
+            const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+            this.life -= dtRatio;
+            this.particles = this.particles.filter(p => {
+                p.x += p.velX * dtRatio; p.y += p.velY * dtRatio;
+                p.velX *= Math.pow(0.95, dtRatio); p.velY *= Math.pow(0.95, dtRatio);
+                p.life -= dtRatio; p.size *= Math.pow(0.94, dtRatio);
+                return p.life > 0;
+            });
+            return this.life > 0;
+        }
+        draw() {
+            this.particles.forEach(p => {
+                ctx.save();
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 80;
+                ctx.shadowColor = '#FF0000';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+    }
+    
+class FloatingScore {
+    constructor(x, y, points) {
+        this.x = x;
+        this.y = y;
+        this.points = points;
+        this.life = 60;
+        this.maxLife = 60;
+        this.velY = -1.5;
+        this.opacity = 1;
+    }
+    
+    update(deltaTime) {
+        const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+        this.life -= dtRatio;
+        this.y += this.velY * dtRatio;
+        this.velY *= Math.pow(0.99, dtRatio); // Slow down over time
+        
+        // Smooth fade out in the last half of life
+        if (this.life < this.maxLife * 0.5) {
+            this.opacity = (this.life / (this.maxLife * 0.5));
+        }
+        
+        return this.life > 0;
+    }
+    
+    draw() {
+        ctx.save();
+        ctx.globalAlpha = this.opacity;
+        ctx.font = '24px "Courier New"';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.shadowColor = '#FFFFFF';
+        ctx.shadowBlur = 20;
+        ctx.textAlign = 'center';
+        ctx.fillText(`+${this.points}`, this.x, this.y);
+        ctx.restore();
+    }
+}
+
+    // -------------------------
+    // Spawn / Init / Loop control
+    // -------------------------
+    let car = null;
+
+    function spawnPlanets() {
+        planets = [];
+        const centerX = logicalWidth / 2;
+        const centerY = logicalHeight / 2;
+
+        for (let i = 0; i < PLANET_COUNT; i++) {
+            let attempts = 0;
+            let validPosition = false;
+            let newPlanet;
+
+            while (!validPosition && attempts < 100) {
+                const angle = (Math.PI * 2 / PLANET_COUNT) * i + getRandom(-0.5, 0.5);
+                const dist = getRandom(150, VISIBLE_RANGE);
+                const x = centerX + Math.cos(angle) * dist;
+                const y = centerY + Math.sin(angle) * dist;
+                const radius = getRandom(20, 50);
+
+                newPlanet = new Planet(x, y, radius, generatePlanetColor());
+                validPosition = !planets.some(p =>
+                    distance(p.x, p.y, newPlanet.x, newPlanet.y) < p.radius + newPlanet.radius + 80
+                );
+                attempts++;
+            }
+
+            if (validPosition) planets.push(newPlanet);
+        }
+    }
+
+function init() {
+    gameState = 'playing';
+    score = 0;
+    gameOverReason = "";
+    crabs = []; eggs = []; explosions = []; blackHoles = []; landingEffects = [];
+    floatingScores = []; // Add this line
+    blackHoleBombs = 0;
+    crabSpawnTimer = 7200;
+    createStarfield();
+    spawnPlanets();
+    
+    updateFullscreenButtonVisibility();
+    
+    car = new Car();
+    const centerX = logicalWidth / 2;
+    const centerY = logicalHeight / 2;
+    
+    if (planets.length > 0) {
+        let closestPlanet = planets.reduce((closest, planet) => {
+            const dist = distance(centerX, centerY, planet.x, planet.y);
+            const closestDist = distance(centerX, centerY, closest.x, closest.y);
+            return dist < closestDist ? planet : closest;
+        });
+        
+        if (closestPlanet) {
+            car.attachTo(closestPlanet);
+            
+            // Spawn initial crab on a visible planet
+            const visiblePlanets = planets.filter(p => 
+                p !== closestPlanet &&
+                p.x > 50 && p.x < logicalWidth - 50 &&
+                p.y > 50 && p.y < logicalHeight - 50
+            );
+            
+            if (visiblePlanets.length > 0) {
+                const crabPlanet = visiblePlanets[Math.floor(Math.random() * visiblePlanets.length)];
+                const crab = new Crab(crabPlanet.x, crabPlanet.y - crabPlanet.radius);
+                crab.attachTo(crabPlanet);
+                crabs.push(crab);
+            }
+        }
+    }
+}
+
+function spawnCrabOffScreen() {
+    if (planets.length === 0) return;
+    
+    // Find planets that are off-screen
+    const offScreenPlanets = planets.filter(p => 
+        p.x < -50 || p.x > logicalWidth + 50 ||
+        p.y < -50 || p.y > logicalHeight + 50
+    );
+    
+    if (offScreenPlanets.length > 0) {
+        const crabPlanet = offScreenPlanets[Math.floor(Math.random() * offScreenPlanets.length)];
+        const crab = new Crab(crabPlanet.x, crabPlanet.y - crabPlanet.radius);
+        crab.attachTo(crabPlanet);
+        crabs.push(crab);
+    } else {
+        // If no off-screen planets, spawn on edge of screen
+        const edgePlanets = planets.filter(p => {
+            const distToCenter = distance(p.x, p.y, logicalWidth/2, logicalHeight/2);
+            return distToCenter > Math.min(logicalWidth, logicalHeight) * 0.4;
+        });
+        
+        if (edgePlanets.length > 0) {
+            const crabPlanet = edgePlanets[Math.floor(Math.random() * edgePlanets.length)];
+            const crab = new Crab(crabPlanet.x, crabPlanet.y - crabPlanet.radius);
+            crab.attachTo(crabPlanet);
+            crabs.push(crab);
+        }
+    }
+}
+
+function checkCollisions() {
+    if (gameState !== 'playing' || !car) return;
+    if (car.isJumping) {
+        for (const planet of planets) {
+            if (planet === car.lastAttachedPlanet) continue;
+            if (distance(car.x, car.y, planet.x, planet.y) < planet.radius +10 + car.size / 2) {
+                car.attachTo(planet);
+                score++; // No floating text for planet landing as requested
+                return;
+            }
+        }
+    }
+    for (const crab of crabs) {
+        if (distance(car.x, car.y, crab.x, crab.y) < car.size + crab.size) {
+            explosions.push(new DeathExplosion(car.x, car.y));
+            setGameOver("Caught by space crab!");
+            return;
+        }
+    }
+    for (let i = eggs.length - 1; i >= 0; i--) {
+        const egg = eggs[i];
+        if (distance(car.x, car.y, egg.x, egg.y) < car.size + egg.currentSize) {
+            explosions.push(new Explosion(egg.x, egg.y));
+            floatingScores.push(new FloatingScore(egg.x, egg.y, 20)); // Add floating score
+            eggs.splice(i, 1);
+            score += 5;
+            blackHoleBombs++;
+        }
+    }
+}
+    function setGameOver(reason) {
+    gameState = 'gameOver';
+    gameOverReason = reason;
+    if (score > highScore) {
+        highScore = score;
+    }
+    updateFullscreenButtonVisibility();
+}
+    // UI drawing functions (menu, game over, UI)
+    function drawStarfield() {
+        stars.forEach(star => {
+            ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+        });
+    }
+
+function drawUI() {
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 28px "Courier New"';
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'white';
+    ctx.shadowBlur = 20;
+    ctx.fillText(`SCORE: ${score}`, 30, 50);
+
+    if (blackHoleBombs > 0) {
+        ctx.fillStyle = '#8A2BE2';
+        ctx.shadowColor = '#8A2BE2';
+        ctx.font = 'bold 28px "Courier New"';
+        ctx.fillText(`(B)OMBS: ${blackHoleBombs}`, 30, 80);
+    }
+
+    ctx.textAlign = 'center';
+    ctx.font = '18px "Courier New"';
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'white';
+    ctx.fillText('[SPACE] Jump between planets', logicalWidth / 2, logicalHeight - 50);
+    if (blackHoleBombs > 0) {
+        ctx.fillText('[B] Deploy Black Hole Bomb', logicalWidth / 2, logicalHeight - 25);
+    }
+    ctx.shadowBlur = 0;
+}
+
+   function drawGameOver() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'white';
+    ctx.shadowBlur = 30;
+
+    ctx.font = 'bold 72px "Courier New"';
+    ctx.fillText('GAME OVER', logicalWidth / 2, logicalHeight / 2 - 100);
+
+    ctx.font = '32px "Courier New"';
+    ctx.fillText(gameOverReason, logicalWidth / 2, logicalHeight / 2 - 40);
+
+    ctx.font = 'bold 40px "Courier New"';
+    ctx.fillText(`Score: ${score}`, logicalWidth / 2, logicalHeight / 2 + 60);
+    
+    // Show high score
+    if (score >= highScore && score > 10) {
+        ctx.font = 'bold 40px "Courier New"';
+        ctx.fillStyle = '#8A2BE2';
+        ctx.shadowColor = '#8A2BE2';
+        ctx.fillText('New high score!', logicalWidth / 2, logicalHeight / 2 + 110);
+    } else if (score <  highScore && score > 10){
+        ctx.font = 'bold 40px "Courier New"';
+        ctx.fillStyle = '#8A2BE2';
+        ctx.shadowColor = '#8A2BE2';
+        ctx.fillText(`High Score: ${highScore}`, logicalWidth / 2, logicalHeight / 2 + 110);
+    }
+
+    ctx.font = '24px "Courier New"';
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'white';
+    ctx.fillText('Click SPACE to play again', logicalWidth / 2, logicalHeight-40);
+    ctx.shadowBlur = 0;
+}
+
+    function drawMenu() {
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        drawStarfield();
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'white';
+        ctx.shadowColor = '#00BFFF';
+        ctx.shadowBlur = 40;
+
+        ctx.font = 'bold 64px "Courier New"';
+        ctx.fillText('SPACE ROLLER', logicalWidth / 2, logicalHeight / 2 - 50);
+
+        ctx.font = '24px "Courier New"';
+        ctx.shadowColor = 'white';
+        ctx.shadowBlur = 20;
+        ctx.fillText('Press SPACE to start', logicalWidth / 2, logicalHeight / 2);
+
+        ctx.font = '18px "Courier New"';
+        ctx.fillStyle = '#87CEEB';
+        ctx.fillText('Hop from planet to planet • Avoid crabs', logicalWidth / 2, logicalHeight / 2 + 50);
+        ctx.shadowBlur = 20; 
+        
+        ctx.font = '18px "Courier New"';
+        ctx.fillStyle = '#87CEEB';
+        ctx.fillText('Destroy eggs for bombs • Kill crabs with bombs (B)', logicalWidth / 2, logicalHeight / 2 + 80);
+        ctx.shadowBlur = 20; 
+    }
+
+    // Main loop - single RAF that runs forever; game state toggles inside without starting new loops
+    let lastTime = 0;
+
+
+   function loop(currentTime) {
+    if (!isLooping) isLooping = true;
+
+    const deltaTime = currentTime - lastTime;
+    lastTime = currentTime;
+
+    if (gameState === 'menu') {
+        updateFullscreenButtonVisibility();
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        drawMenu();
+        animationFrameId = requestAnimationFrame(loop);
+        return;
+    }
+
+    ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+    drawStarfield();
+
+    planets.forEach(p => p.update(planets, car ? car.x : logicalWidth / 2, car ? car.y : logicalHeight / 2, deltaTime));
+    planets.forEach(p => p.draw());
+
+    eggs = eggs.filter(egg => !egg.update(deltaTime));
+    eggs.forEach(egg => egg.draw());
+
+    crabs.forEach(crab => crab.update(car, planets, deltaTime));
+    crabs.forEach(crab => crab.draw());
+
+    if (gameState === 'playing') {
+        crabSpawnTimer -= deltaTime;
+        if (crabSpawnTimer <= 0) {
+            spawnCrabOffScreen();
+            crabSpawnTimer = 7200;
+        }
+    }
+
+    if (gameState === 'playing' && car) {
+        blackHoles = blackHoles.filter(hole => !hole.update(car, crabs, eggs, deltaTime));
+    } else {
+        blackHoles = blackHoles.filter(hole => {
+            const dtRatio = deltaTime / FIXED_FPS_INTERVAL;
+            hole.life -= dtRatio;
+            hole.rotation += 0.1 * dtRatio;
+            
+            if (hole.state === 'converging') {
+                hole.convergeTimer -= dtRatio;
+                hole.particles.forEach(p => {
+                    p.distance = Math.max(0, p.distance - p.distance * 0.08 * dtRatio);
+                });
+                if (hole.convergeTimer <= 0) {
+                    hole.state = 'active';
+                    hole.particles.forEach(p => {
+                        p.distance = p.orbitRadius;
+                    });
+                }
+            } else if (hole.state === 'active') {
+                if (hole.radius < hole.maxRadius) {
+                    hole.radius = Math.min(hole.radius + 15 * dtRatio, hole.maxRadius);
+                }
+                hole.particles.forEach(p => {
+                    p.angle += p.speed * dtRatio;
+                    p.distance = p.orbitRadius * (hole.radius / hole.maxRadius);
+                });
+                if (hole.life < 30) hole.state = 'contracting';
+            } else if (hole.state === 'contracting') {
+                hole.radius = Math.max(0, hole.radius - 4 * dtRatio);
+                hole.particles.forEach(p => {
+                    p.distance = Math.max(0, p.distance - 2 * dtRatio);
+                });
+            }
+            
+            return hole.life > 0;
+        });
+    }
+    blackHoles.forEach(hole => hole.draw());
+
+    if (gameState === 'playing' && car) {
+        car.update(deltaTime);
+        car.draw();
+        checkCollisions();
+    }
+
+    explosions = explosions.filter(exp => exp.update(deltaTime));
+    explosions.forEach(exp => exp.draw());
+
+    landingEffects = landingEffects.filter(effect => effect.update(deltaTime));
+    landingEffects.forEach(effect => effect.draw());
+    
+    // Add floating scores update and draw
+    floatingScores = floatingScores.filter(score => score.update(deltaTime));
+    floatingScores.forEach(score => score.draw());
+
+    if (gameState === 'playing') drawUI();
+    if (gameState === 'gameOver') drawGameOver();
+
+    animationFrameId = requestAnimationFrame(loop);
+}
+    // Input handling
+    function handleInput() {
+        if (gameState === 'menu') {
+            init();
+        } else if (gameState === 'gameOver') {
+            init();
+        } else if (gameState === 'playing' && car) {
+            car.jump();
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+            e.preventDefault();
+            handleInput();
+        } else if (e.code === 'KeyB' && gameState === 'playing' && car && blackHoleBombs > 0) {
+            e.preventDefault();
+            blackHoles.push(new BlackHole(car.x, car.y));
+            blackHoleBombs--;
+        } else if (e.code === 'KeyQ' && gameState === 'playing') {
+            e.preventDefault();
+            blackHoleBombs++;
+
+    }});
+
+    canvas.addEventListener('click', handleInput);
+
+    // Start: create starfield, show menu, start single RAF loop
+    createStarfield();
+    drawMenu();
+    loop(); // start single RAF loop once
+
+</script>
+</body>
+</html>
